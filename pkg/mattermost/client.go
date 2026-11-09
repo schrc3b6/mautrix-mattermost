@@ -102,9 +102,59 @@ func (c *Client) GetUser(ctx context.Context, userID string) (*User, error) {
 	return &user, c.getJSON(ctx, "/users/"+url.PathEscape(userID), &user)
 }
 
+func (c *Client) GetUserByUsername(ctx context.Context, username string) (*User, error) {
+	var user User
+	return &user, c.getJSON(ctx, "/users/username/"+url.PathEscape(username), &user)
+}
+
+func (c *Client) GetUserByEmail(ctx context.Context, email string) (*User, error) {
+	var user User
+	return &user, c.getJSON(ctx, "/users/email/"+url.PathEscape(email), &user)
+}
+
 func (c *Client) GetChannel(ctx context.Context, channelID string) (*Channel, error) {
 	var channel Channel
 	return &channel, c.getJSON(ctx, "/channels/"+url.PathEscape(channelID), &channel)
+}
+
+// channelMembersPerPage is the most Mattermost returns per request.
+const channelMembersPerPage = 200
+
+// GetChannelMembers returns every member of a channel, following the pagination.
+func (c *Client) GetChannelMembers(ctx context.Context, channelID string) ([]ChannelMember, error) {
+	var members []ChannelMember
+	for page := 0; ; page++ {
+		var batch []ChannelMember
+		path := fmt.Sprintf("/channels/%s/members?page=%d&per_page=%d", url.PathEscape(channelID), page, channelMembersPerPage)
+		if err := c.getJSON(ctx, path, &batch); err != nil {
+			return nil, err
+		}
+		members = append(members, batch...)
+		if len(batch) < channelMembersPerPage {
+			return members, nil
+		}
+	}
+}
+
+// CreateDirectChannel returns the direct message channel between two users, creating it if there is none yet.
+func (c *Client) CreateDirectChannel(ctx context.Context, userID, otherUserID string) (*Channel, error) {
+	return c.postChannel(ctx, "/channels/direct", []string{userID, otherUserID})
+}
+
+// CreateGroupChannel returns the group message channel with exactly these members, creating it if
+// there is none yet. Mattermost wants 3 to 8 users, the caller included.
+func (c *Client) CreateGroupChannel(ctx context.Context, userIDs []string) (*Channel, error) {
+	return c.postChannel(ctx, "/channels/group", userIDs)
+}
+
+func (c *Client) postChannel(ctx context.Context, path string, userIDs []string) (*Channel, error) {
+	resp, err := c.do(ctx, http.MethodPost, path, userIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	var channel Channel
+	return &channel, json.NewDecoder(resp.Body).Decode(&channel)
 }
 
 // CreatePost sends a post and returns it as the server stored it.

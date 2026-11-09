@@ -140,3 +140,80 @@ func TestListenDetectsRevokedSession(t *testing.T) {
 	err := (&Client{ServerURL: srv.URL, Token: "revoked", SessionCheckInterval: 50 * time.Millisecond}).Listen(ctx, func() {}, func(*WebSocketEvent) {})
 	assert.True(t, IsUnauthorized(err), "expected 401, got %v", err)
 }
+
+func TestOtherDirectMessageUserID(t *testing.T) {
+	dm := &Channel{Type: ChannelDirect, Name: "aaaaaaaaaaaaaaaaaaaaaaaaaa__bbbbbbbbbbbbbbbbbbbbbbbbbb"}
+	other, ok := dm.OtherDirectMessageUserID("aaaaaaaaaaaaaaaaaaaaaaaaaa")
+	require.True(t, ok)
+	assert.Equal(t, "bbbbbbbbbbbbbbbbbbbbbbbbbb", other)
+	other, ok = dm.OtherDirectMessageUserID("bbbbbbbbbbbbbbbbbbbbbbbbbb")
+	require.True(t, ok)
+	assert.Equal(t, "aaaaaaaaaaaaaaaaaaaaaaaaaa", other)
+	_, ok = dm.OtherDirectMessageUserID("cccccccccccccccccccccccccc")
+	assert.False(t, ok, "not a member")
+
+	self := &Channel{Type: ChannelDirect, Name: "aaaaaaaaaaaaaaaaaaaaaaaaaa__aaaaaaaaaaaaaaaaaaaaaaaaaa"}
+	other, ok = self.OtherDirectMessageUserID("aaaaaaaaaaaaaaaaaaaaaaaaaa")
+	require.True(t, ok)
+	assert.Equal(t, "aaaaaaaaaaaaaaaaaaaaaaaaaa", other, "DM with yourself")
+
+	_, ok = (&Channel{Type: ChannelGroup, Name: "x__y"}).OtherDirectMessageUserID("x")
+	assert.False(t, ok, "not a DM")
+	_, ok = (&Channel{Type: ChannelDirect, Name: "town-square"}).OtherDirectMessageUserID("x")
+	assert.False(t, ok, "unexpected name")
+}
+
+func TestGetChannelMembers(t *testing.T) {
+	var pages []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/api/v4/channels/ch1/members", r.URL.Path)
+		page := r.URL.Query().Get("page")
+		pages = append(pages, page)
+		var members []ChannelMember
+		if page == "0" {
+			for i := 0; i < channelMembersPerPage; i++ {
+				members = append(members, ChannelMember{ChannelID: "ch1", UserID: "full"})
+			}
+		} else {
+			members = []ChannelMember{{ChannelID: "ch1", UserID: "last"}}
+		}
+		require.NoError(t, json.NewEncoder(w).Encode(members))
+	}))
+	defer srv.Close()
+
+	members, err := (&Client{ServerURL: srv.URL}).GetChannelMembers(context.Background(), "ch1")
+	require.NoError(t, err)
+	assert.Len(t, members, channelMembersPerPage+1)
+	assert.Equal(t, "last", members[channelMembersPerPage].UserID)
+	assert.Equal(t, []string{"0", "1"}, pages)
+}
+
+func TestCreateDirectAndGroupChannel(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, http.MethodPost, r.Method)
+		var userIDs []string
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&userIDs))
+		switch r.URL.Path {
+		case "/api/v4/channels/direct":
+			assert.Equal(t, []string{"me", "other"}, userIDs)
+			_, _ = w.Write([]byte(`{"id":"dm1","type":"D","name":"me__other"}`))
+		case "/api/v4/channels/group":
+			assert.Equal(t, []string{"me", "a", "b"}, userIDs)
+			_, _ = w.Write([]byte(`{"id":"gm1","type":"G","display_name":"a, b, me"}`))
+		default:
+			t.Errorf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	cli := &Client{ServerURL: srv.URL}
+	dm, err := cli.CreateDirectChannel(context.Background(), "me", "other")
+	require.NoError(t, err)
+	assert.Equal(t, "dm1", dm.ID)
+	assert.Equal(t, ChannelDirect, dm.Type)
+
+	gm, err := cli.CreateGroupChannel(context.Background(), []string{"me", "a", "b"})
+	require.NoError(t, err)
+	assert.Equal(t, "gm1", gm.ID)
+	assert.Equal(t, "a, b, me", gm.DisplayName)
+}

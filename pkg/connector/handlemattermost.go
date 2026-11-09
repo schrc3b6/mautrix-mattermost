@@ -37,10 +37,7 @@ func (mc *MattermostClient) handleEvent(ctx context.Context, evt *mattermost.Web
 
 func (mc *MattermostClient) handlePost(ctx context.Context, channelType mattermost.ChannelType, post *mattermost.Post) {
 	log := zerolog.Ctx(ctx).With().Str("post_id", post.ID).Str("channel_id", post.ChannelID).Logger()
-	if channelType != mattermost.ChannelOpen && channelType != mattermost.ChannelPrivate {
-		log.Debug().Str("channel_type", string(channelType)).Msg("Ignoring post in direct or group message, not supported yet")
-		return
-	} else if post.IsSystem() {
+	if post.IsSystem() {
 		log.Debug().Str("post_type", post.Type).Msg("Ignoring system post")
 		return
 	}
@@ -50,7 +47,7 @@ func (mc *MattermostClient) handlePost(ctx context.Context, channelType mattermo
 			LogContext: func(c zerolog.Context) zerolog.Context {
 				return c.Str("post_id", post.ID).Str("channel_id", post.ChannelID)
 			},
-			PortalKey:    mc.makePortalKey(post.ChannelID),
+			PortalKey:    mc.makePortalKey(post.ChannelID, channelType),
 			Sender:       mc.makeEventSender(post.UserID),
 			CreatePortal: true,
 			Timestamp:    time.UnixMilli(post.CreateAt),

@@ -4,11 +4,13 @@ An **unofficial** Matrix-Mattermost puppeting bridge built on [mautrix-go](https
 
 ## Status
 
-Early: text messages in public and private channels, both directions.
+Early: text messages in channels, direct messages and group messages, both directions.
 
 Works:
 - Login flow `credentials`: first the server URL, then username or email and password. No admin rights are needed, so it works on servers where personal access tokens are disabled. Login IDs are `<host>/<user id>`, so one bridge can serve logins on several servers.
 - New posts in public and private channels arrive in Matrix as they're sent, one portal room per channel. Markdown is converted, and thread replies become Matrix threads.
+- Direct messages become DM rooms with the other user's ghost, group messages become group rooms with every member joined and Mattermost's "alice, bob, carol" name. Both are per login: a channel room is shared by every Matrix user logged in to that server, a DM or group room is not.
+- Starting chats from Matrix: `start-chat alice`, `start-chat alice@example.org` or a user ID opens the DM, `resolve-identifier` only looks the user up. A group message needs 3 to 8 members including you, as in Mattermost.
 - Text messages sent from Matrix are posted to the channel, with Matrix formatting converted to Markdown. Notices are sent too if `bridge_notices` is enabled in the config. Underline has no Markdown equivalent and is dropped.
 - Replies in a Matrix thread become replies in the Mattermost thread.
 - Mentions (pills) of Mattermost users become `@username`, including Matrix users logged in to the same Mattermost server. Other Matrix users stay as their display name.
@@ -20,7 +22,6 @@ Matrix replies outside a thread also become thread replies, attached to the thre
 Images, files, emotes, locations, edits, deletions and reactions from Matrix are rejected with an error message status. Rejected images, files and emotes also get a notice in the room.
 
 Not yet:
-- Direct and group messages
 - Edits, deletions, reactions, attachments, backfill
 - `@room` to `@channel`
 - Personal access token login, MFA

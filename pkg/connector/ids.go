@@ -6,6 +6,8 @@ import (
 	"maunium.net/go/mautrix/bridgev2"
 	"maunium.net/go/mautrix/bridgev2/database"
 	"maunium.net/go/mautrix/bridgev2/networkid"
+
+	"github.com/robinchoice/mautrix-mattermost/pkg/mattermost"
 )
 
 type UserLoginMetadata struct {
@@ -21,17 +23,25 @@ func (mc *MattermostConnector) GetDBMetaTypes() database.MetaTypes {
 	}
 }
 
+func networkUserID(userID string) networkid.UserID {
+	return networkid.UserID(userID)
+}
+
 func (mc *MattermostClient) makeEventSender(userID string) bridgev2.EventSender {
 	return bridgev2.EventSender{
 		IsFromMe:    userID == mc.ownUserID,
 		SenderLogin: makeUserLoginID(mc.Client.ServerURL, userID),
-		Sender:      networkid.UserID(userID),
+		Sender:      networkUserID(userID),
 	}
 }
 
-func (mc *MattermostClient) makePortalKey(channelID string) networkid.PortalKey {
+// makePortalKey keys team channels by channel ID alone, so Matrix users logged in to the same
+// server share one room. Direct and group messages get the login as receiver: they are between
+// this user and a few others, and two logins that are both in one would otherwise share a room
+// in which "the other user" of a DM differs per login.
+func (mc *MattermostClient) makePortalKey(channelID string, channelType mattermost.ChannelType) networkid.PortalKey {
 	pk := networkid.PortalKey{ID: networkid.PortalID(channelID)}
-	if mc.UserLogin.Bridge.Config.SplitPortals {
+	if mc.UserLogin.Bridge.Config.SplitPortals || channelType.IsDirectOrGroup() {
 		pk.Receiver = mc.UserLogin.ID
 	}
 	return pk

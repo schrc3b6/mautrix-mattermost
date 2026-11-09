@@ -46,6 +46,34 @@ type Channel struct {
 	Purpose     string      `json:"purpose"`
 }
 
+// IsDirectOrGroup reports whether the channel is a direct or group message rather than a team channel.
+func (t ChannelType) IsDirectOrGroup() bool {
+	return t == ChannelDirect || t == ChannelGroup
+}
+
+// OtherDirectMessageUserID returns the other member of a direct message channel. Mattermost names
+// these "<user id>__<user id>" with the IDs sorted, so no request is needed. A DM with yourself
+// has your ID on both sides.
+func (ch *Channel) OtherDirectMessageUserID(ownUserID string) (string, bool) {
+	if ch.Type != ChannelDirect {
+		return "", false
+	}
+	a, b, ok := strings.Cut(ch.Name, "__")
+	if !ok || a == "" || b == "" {
+		return "", false
+	} else if a == ownUserID {
+		return b, true
+	} else if b == ownUserID {
+		return a, true
+	}
+	return "", false
+}
+
+type ChannelMember struct {
+	ChannelID string `json:"channel_id"`
+	UserID    string `json:"user_id"`
+}
+
 type Post struct {
 	ID        string   `json:"id,omitempty"`
 	CreateAt  int64    `json:"create_at,omitempty"`

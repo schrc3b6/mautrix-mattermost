@@ -9,12 +9,20 @@ import (
 	"maunium.net/go/mautrix/bridgev2/database"
 	"maunium.net/go/mautrix/bridgev2/networkid"
 	"maunium.net/go/mautrix/event"
+
+	"github.com/robinchoice/mautrix-mattermost/pkg/mattermost"
 )
 
 func (mc *MattermostClient) GetChatInfo(ctx context.Context, portal *bridgev2.Portal) (*bridgev2.ChatInfo, error) {
 	channel, err := mc.Client.GetChannel(ctx, string(portal.ID))
 	if err != nil {
 		return nil, err
+	}
+	switch channel.Type {
+	case mattermost.ChannelDirect:
+		return mc.directChatInfo(ctx, channel)
+	case mattermost.ChannelGroup:
+		return mc.groupChatInfo(ctx, channel)
 	}
 	topic := channel.Purpose
 	if topic == "" {
@@ -24,16 +32,63 @@ func (mc *MattermostClient) GetChatInfo(ctx context.Context, portal *bridgev2.Po
 		Name:  &channel.DisplayName,
 		Topic: &topic,
 		// Other members join as they post. Syncing the full member list comes later.
-		Members: &bridgev2.ChatMemberList{
-			MemberMap: map[networkid.UserID]bridgev2.ChatMember{
-				networkid.UserID(mc.ownUserID): {
-					EventSender: mc.makeEventSender(mc.ownUserID),
-					Membership:  event.MembershipJoin,
-				},
-			},
-		},
-		Type: ptr.Ptr(database.RoomTypeDefault),
+		Members: mc.memberList(false, mc.ownUserID),
+		Type:    ptr.Ptr(database.RoomTypeDefault),
 	}, nil
+}
+
+// directChatInfo describes a DM. No name or topic: Matrix clients name a two-member room after
+// the other member, which follows their profile, and Mattermost DMs have no name of their own.
+func (mc *MattermostClient) directChatInfo(ctx context.Context, channel *mattermost.Channel) (*bridgev2.ChatInfo, error) {
+	otherUserID, ok := channel.OtherDirectMessageUserID(mc.ownUserID)
+	if !ok {
+		// The name should always parse, but the member list is the authority.
+		members, err := mc.Client.GetChannelMembers(ctx, channel.ID)
+		if err != nil {
+			return nil, err
+		}
+		otherUserID = mc.ownUserID
+		for _, member := range members {
+			if member.UserID != mc.ownUserID {
+				otherUserID = member.UserID
+			}
+		}
+	}
+	info := &bridgev2.ChatInfo{
+		Members: mc.memberList(true, mc.ownUserID, otherUserID),
+		Type:    ptr.Ptr(database.RoomTypeDM),
+	}
+	info.Members.OtherUserID = networkid.UserID(otherUserID)
+	return info, nil
+}
+
+// groupChatInfo describes a group message. Mattermost names them after the members
+// ("alice, bob, carol") and keeps that up to date, so the display name is used as is.
+func (mc *MattermostClient) groupChatInfo(ctx context.Context, channel *mattermost.Channel) (*bridgev2.ChatInfo, error) {
+	members, err := mc.Client.GetChannelMembers(ctx, channel.ID)
+	if err != nil {
+		return nil, err
+	}
+	userIDs := make([]string, len(members))
+	for i, member := range members {
+		userIDs[i] = member.UserID
+	}
+	return &bridgev2.ChatInfo{
+		Name:    &channel.DisplayName,
+		Members: mc.memberList(true, userIDs...),
+		Type:    ptr.Ptr(database.RoomTypeGroupDM),
+	}, nil
+}
+
+func (mc *MattermostClient) memberList(full bool, userIDs ...string) *bridgev2.ChatMemberList {
+	memberMap := make(map[networkid.UserID]bridgev2.ChatMember, len(userIDs))
+	for _, userID := range userIDs {
+		memberMap[networkid.UserID(userID)] = bridgev2.ChatMember{
+			EventSender: mc.makeEventSender(userID),
+			Membership:  event.MembershipJoin,
+		}
+	}
+	return &bridgev2.ChatMemberList{IsFull: full, MemberMap: memberMap}
 }
 
 func (mc *MattermostClient) GetUserInfo(ctx context.Context, ghost *bridgev2.Ghost) (*bridgev2.UserInfo, error) {
@@ -41,6 +96,10 @@ func (mc *MattermostClient) GetUserInfo(ctx context.Context, ghost *bridgev2.Gho
 	if err != nil {
 		return nil, err
 	}
+	return mc.userInfo(user), nil
+}
+
+func (mc *MattermostClient) userInfo(user *mattermost.User) *bridgev2.UserInfo {
 	return &bridgev2.UserInfo{
 		Identifiers: []string{"mattermost:" + user.Username},
 		Name:        ptr.Ptr(user.DisplayName()),
@@ -51,7 +110,7 @@ func (mc *MattermostClient) GetUserInfo(ctx context.Context, ghost *bridgev2.Gho
 				return mc.Client.GetProfileImage(ctx, user.ID)
 			},
 		},
-	}, nil
+	}
 }
 
 func (mc *MattermostConnector) GetBridgeInfoVersion() (info, capabilities int) {
