@@ -23,6 +23,16 @@ type MattermostClient struct {
 	loggedIn  atomic.Bool
 	stop      atomic.Pointer[context.CancelFunc]
 	stopped   atomic.Pointer[chan struct{}]
+	// The server's upload limit, read once on connect; 0 until then.
+	maxFileSize atomic.Int64
+}
+
+// mattermostMaxFileSize is the largest file the bridge will upload to Mattermost.
+func (mc *MattermostClient) mattermostMaxFileSize() int64 {
+	if size := mc.maxFileSize.Load(); size > 0 {
+		return size
+	}
+	return mattermost.DefaultMaxFileSize
 }
 
 var _ bridgev2.NetworkAPI = (*MattermostClient)(nil)
@@ -58,8 +68,18 @@ func (mc *MattermostClient) Connect(ctx context.Context) {
 	mc.stopped.Store(&done)
 	go func() {
 		defer close(done)
+		mc.loadMaxFileSize(ctx)
 		mc.listenLoop(ctx)
 	}()
+}
+
+func (mc *MattermostClient) loadMaxFileSize(ctx context.Context) {
+	size, err := mc.Client.MaxFileSize(ctx)
+	if err != nil {
+		mc.UserLogin.Log.Warn().Err(err).Msg("Failed to read the server's upload limit, assuming the default")
+		return
+	}
+	mc.maxFileSize.Store(size)
 }
 
 const (

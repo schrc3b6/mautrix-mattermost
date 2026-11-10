@@ -77,3 +77,33 @@ func TestConvertMatrixMentions(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "@alice and Bob: hi", post.Message)
 }
+
+func TestMediaPost(t *testing.T) {
+	// A caption is the body when it differs from the file name.
+	post := mediaPost(context.Background(), makeMatrixMessage(&event.MessageEventContent{
+		MsgType:       event.MsgImage,
+		Body:          "look at *this*",
+		FileName:      "cat.png",
+		Format:        event.FormatHTML,
+		FormattedBody: "look at <em>this</em>",
+	}, &database.Message{ID: "root1"}), "file1", noUsernames)
+	assert.Equal(t, []string{"file1"}, post.FileIDs)
+	assert.Equal(t, "look at _this_", post.Message)
+	assert.Equal(t, "root1", post.RootID)
+
+	// No caption: the body is just the file name.
+	post = mediaPost(context.Background(), makeMatrixMessage(&event.MessageEventContent{
+		MsgType: event.MsgFile,
+		Body:    "report.pdf",
+	}, nil), "file2", noUsernames)
+	assert.Equal(t, []string{"file2"}, post.FileIDs)
+	assert.Empty(t, post.Message)
+}
+
+func TestMatrixFileName(t *testing.T) {
+	assert.Equal(t, "cat.png", matrixFileName(&event.MessageEventContent{Body: "cat.png"}))
+	assert.Equal(t, "cat.png", matrixFileName(&event.MessageEventContent{Body: "caption", FileName: "cat.png"}))
+	assert.Equal(t, "image.png", matrixFileName(&event.MessageEventContent{Body: "image", Info: &event.FileInfo{MimeType: "image/png"}}))
+	assert.Equal(t, "file.pdf", matrixFileName(&event.MessageEventContent{Info: &event.FileInfo{MimeType: "application/pdf"}}))
+	assert.Equal(t, "file", matrixFileName(&event.MessageEventContent{}))
+}

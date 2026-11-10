@@ -8,8 +8,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -168,6 +170,82 @@ func (c *Client) CreatePost(ctx context.Context, post *Post) (*Post, error) {
 	return &created, json.NewDecoder(resp.Body).Decode(&created)
 }
 
+// DefaultMaxFileSize is Mattermost's own default upload limit, used when the server doesn't say.
+const DefaultMaxFileSize = 100 << 20
+
+// MaxFileSize returns the server's upload limit in bytes from its client configuration, which
+// any session may read. A missing or unparsable value falls back to DefaultMaxFileSize.
+func (c *Client) MaxFileSize(ctx context.Context) (int64, error) {
+	var config map[string]string
+	if err := c.getJSON(ctx, "/config/client?format=old", &config); err != nil {
+		return 0, err
+	}
+	size, err := strconv.ParseInt(config["MaxFileSize"], 10, 64)
+	if err != nil || size <= 0 {
+		return DefaultMaxFileSize, nil
+	}
+	return size, nil
+}
+
+func (c *Client) GetFileInfo(ctx context.Context, fileID string) (*FileInfo, error) {
+	var info FileInfo
+	return &info, c.getJSON(ctx, "/files/"+url.PathEscape(fileID)+"/info", &info)
+}
+
+// GetFile downloads an attachment. Files larger than maxSize are cut off with an error, so a
+// caller never holds more than that in memory.
+func (c *Client) GetFile(ctx context.Context, fileID string, maxSize int64) ([]byte, error) {
+	resp, err := c.do(ctx, http.MethodGet, "/files/"+url.PathEscape(fileID), nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxSize+1))
+	if err != nil {
+		return nil, err
+	} else if int64(len(data)) > maxSize {
+		return nil, fmt.Errorf("file is larger than %d bytes", maxSize)
+	}
+	return data, nil
+}
+
+// UploadFile uploads a file for use in a post to the channel. The returned FileInfo's ID goes
+// into Post.FileIDs; Mattermost drops uploads that aren't attached to a post within a day.
+func (c *Client) UploadFile(ctx context.Context, channelID, fileName string, data []byte) (*FileInfo, error) {
+	var buf bytes.Buffer
+	writer := multipart.NewWriter(&buf)
+	if err := writer.WriteField("channel_id", channelID); err != nil {
+		return nil, err
+	}
+	part, err := writer.CreateFormFile("files", fileName)
+	if err != nil {
+		return nil, err
+	} else if _, err = part.Write(data); err != nil {
+		return nil, err
+	} else if err = writer.Close(); err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.ServerURL+"/api/v4/files", &buf)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	resp, err := c.send(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	var result struct {
+		FileInfos []*FileInfo `json:"file_infos"`
+	}
+	if err = json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, err
+	} else if len(result.FileInfos) != 1 {
+		return nil, fmt.Errorf("upload response has %d file infos, expected 1", len(result.FileInfos))
+	}
+	return result.FileInfos[0], nil
+}
+
 func (c *Client) GetProfileImage(ctx context.Context, userID string) ([]byte, error) {
 	resp, err := c.do(ctx, http.MethodGet, "/users/"+url.PathEscape(userID)+"/image", nil)
 	if err != nil {
@@ -202,6 +280,11 @@ func (c *Client) do(ctx context.Context, method, path string, body any) (*http.R
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
+	return c.send(req)
+}
+
+// send adds the session headers, runs the request and turns error statuses into an APIError.
+func (c *Client) send(req *http.Request) (*http.Response, error) {
 	c.setHeaders(req.Header)
 	httpClient := c.HTTP
 	if httpClient == nil {

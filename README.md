@@ -4,7 +4,7 @@ An **unofficial** Matrix-Mattermost puppeting bridge built on [mautrix-go](https
 
 ## Status
 
-Early: text messages in channels, direct messages and group messages, both directions.
+Early: text messages and attachments in channels, direct messages and group messages, both directions.
 
 Works:
 - Login flow `credentials`: first the server URL, then username or email and password. No admin rights are needed, so it works on servers where personal access tokens are disabled. Login IDs are `<host>/<user id>`, so one bridge can serve logins on several servers.
@@ -12,6 +12,7 @@ Works:
 - Direct messages become DM rooms with the other user's ghost, group messages become group rooms with every member joined and Mattermost's "alice, bob, carol" name. Both are per login: a channel room is shared by every Matrix user logged in to that server, a DM or group room is not.
 - Starting chats from Matrix: `start-chat alice`, `start-chat alice@example.org` or a user ID opens the DM, `resolve-identifier` only looks the user up. A group message needs 3 to 8 members including you, as in Mattermost.
 - Text messages sent from Matrix are posted to the channel, with Matrix formatting converted to Markdown. Notices are sent too if `bridge_notices` is enabled in the config. Underline has no Markdown equivalent and is dropped.
+- Attachments both ways. Files on a Mattermost post arrive as image, video, audio or file messages after the post's text; one that can't be fetched or is over the homeserver's upload limit becomes a notice instead. Images, files, audio, video, voice messages and stickers sent from Matrix are uploaded to Mattermost and posted with the caption as the message. The server's upload limit (`MaxFileSize`, read on connect) is advertised to Matrix clients, so oversized files are refused before upload.
 - Replies in a Matrix thread become replies in the Mattermost thread.
 - Mentions (pills) of Mattermost users become `@username`, including Matrix users logged in to the same Mattermost server. Other Matrix users stay as their display name.
 - Your own posts come back from Mattermost as echoes and don't show up twice in Matrix.
@@ -19,10 +20,11 @@ Works:
 
 Matrix replies outside a thread also become thread replies, attached to the thread of the message you replied to. Mattermost has no other kind of reply: its reply button opens the thread. Posting a reply as a plain message would lose the context it refers to. The bridge advertises threads but not replies in its room capabilities, so bridgev2 does this conversion itself.
 
-Images, files, emotes, locations, edits, deletions and reactions from Matrix are rejected with an error message status. Rejected images, files and emotes also get a notice in the room.
+Emotes, locations, edits, deletions and reactions from Matrix are rejected with an error message status. Rejected emotes also get a notice in the room.
 
 Not yet:
-- Edits, deletions, reactions, attachments, backfill
+- Edits, deletions, reactions, backfill
+- Image thumbnails and blurhashes
 - `@room` to `@channel`
 - Personal access token login, MFA
 - Syncing channel members and teams as spaces

@@ -3,6 +3,7 @@ package mattermost
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -216,4 +217,54 @@ func TestCreateDirectAndGroupChannel(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "gm1", gm.ID)
 	assert.Equal(t, "a, b, me", gm.DisplayName)
+}
+
+func TestFiles(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method + " " + r.URL.Path {
+		case "POST /api/v4/files":
+			require.NoError(t, r.ParseMultipartForm(1<<20))
+			assert.Equal(t, "c1", r.FormValue("channel_id"))
+			file, header, err := r.FormFile("files")
+			require.NoError(t, err)
+			defer file.Close()
+			data, _ := io.ReadAll(file)
+			assert.Equal(t, "hello.txt", header.Filename)
+			assert.Equal(t, "hello", string(data))
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"file_infos":[{"id":"f1","name":"hello.txt","size":5,"mime_type":"text/plain"}],"client_ids":[]}`))
+		case "GET /api/v4/files/f1/info":
+			_, _ = w.Write([]byte(`{"id":"f1","name":"hello.txt","size":5,"mime_type":"text/plain","width":0,"height":0}`))
+		case "GET /api/v4/files/f1":
+			_, _ = w.Write([]byte("hello"))
+		case "GET /api/v4/config/client":
+			assert.Equal(t, "old", r.URL.Query().Get("format"))
+			_, _ = w.Write([]byte(`{"MaxFileSize":"52428800","SiteName":"Test"}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	cli := &Client{ServerURL: srv.URL, Token: "t"}
+	ctx := context.Background()
+
+	info, err := cli.UploadFile(ctx, "c1", "hello.txt", []byte("hello"))
+	require.NoError(t, err)
+	assert.Equal(t, "f1", info.ID)
+	assert.Equal(t, "text/plain", info.MimeType)
+
+	info, err = cli.GetFileInfo(ctx, "f1")
+	require.NoError(t, err)
+	assert.Equal(t, "hello.txt", info.Name)
+	assert.EqualValues(t, 5, info.Size)
+
+	data, err := cli.GetFile(ctx, "f1", 1<<20)
+	require.NoError(t, err)
+	assert.Equal(t, "hello", string(data))
+	_, err = cli.GetFile(ctx, "f1", 3)
+	assert.Error(t, err, "a file over the limit is refused")
+
+	size, err := cli.MaxFileSize(ctx)
+	require.NoError(t, err)
+	assert.EqualValues(t, 52428800, size)
 }

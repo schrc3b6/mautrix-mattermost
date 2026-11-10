@@ -9,8 +9,6 @@ import (
 	"maunium.net/go/mautrix/bridgev2"
 	"maunium.net/go/mautrix/bridgev2/networkid"
 	"maunium.net/go/mautrix/bridgev2/simplevent"
-	"maunium.net/go/mautrix/event"
-	"maunium.net/go/mautrix/format"
 
 	"github.com/robinchoice/mautrix-mattermost/pkg/mattermost"
 )
@@ -56,32 +54,6 @@ func (mc *MattermostClient) handlePost(ctx context.Context, channelType mattermo
 		Data:               post,
 		TransactionID:      networkid.TransactionID(post.PendingPostID),
 		ID:                 networkid.MessageID(post.ID),
-		ConvertMessageFunc: convertPost,
+		ConvertMessageFunc: mc.convertPost,
 	})
-}
-
-func convertPost(ctx context.Context, portal *bridgev2.Portal, intent bridgev2.MatrixAPI, post *mattermost.Post) (*bridgev2.ConvertedMessage, error) {
-	content := format.RenderMarkdown(post.Message, true, false)
-	if len(post.FileIDs) > 0 {
-		// TODO bridge attachments
-		notice := "(attachment not bridged yet)"
-		if content.Body == "" {
-			content = event.MessageEventContent{MsgType: event.MsgNotice, Body: notice}
-		} else {
-			content.Body += "\n\n" + notice
-			if content.FormattedBody != "" {
-				content.FormattedBody += "<p><em>" + notice + "</em></p>"
-			}
-		}
-	}
-	converted := &bridgev2.ConvertedMessage{
-		Parts: []*bridgev2.ConvertedMessagePart{{
-			Type:    event.EventMessage,
-			Content: &content,
-		}},
-	}
-	if post.RootID != "" {
-		converted.ThreadRoot = (*networkid.MessageID)(&post.RootID)
-	}
-	return converted, nil
 }

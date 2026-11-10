@@ -2,6 +2,7 @@ package connector
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 
 	"go.mau.fi/util/ptr"
@@ -122,8 +123,16 @@ func (mc *MattermostConnector) GetCapabilities() *bridgev2.NetworkGeneralCapabil
 }
 
 func (mc *MattermostClient) GetCapabilities(ctx context.Context, portal *bridgev2.Portal) *event.RoomFeatures {
+	// Mattermost takes any file type; the only limit is the server's size cap. Voice messages
+	// and stickers go through as plain audio and image attachments.
+	files := &event.FileFeatures{
+		MimeTypes: map[string]event.CapabilitySupportLevel{"*/*": event.CapLevelFullySupported},
+		Caption:   event.CapLevelFullySupported,
+		MaxSize:   mc.mattermostMaxFileSize(),
+	}
 	return &event.RoomFeatures{
-		ID: "com.github.robinchoice.mattermost.capabilities.2026_10_14.1",
+		// The size limit is per server, so it's part of the ID.
+		ID: fmt.Sprintf("com.github.robinchoice.mattermost.capabilities.2026_11_10.1+%d", files.MaxSize),
 		Formatting: event.FormattingFeatureMap{
 			event.FmtBold:               event.CapLevelFullySupported,
 			event.FmtItalic:             event.CapLevelFullySupported,
@@ -140,7 +149,15 @@ func (mc *MattermostClient) GetCapabilities(ctx context.Context, portal *bridgev
 			event.FmtHeaders:            event.CapLevelFullySupported,
 			event.FmtHorizontalLine:     event.CapLevelFullySupported,
 		},
-		// No File entries: images, files, audio, video and stickers are rejected.
+		File: event.FileFeatureMap{
+			event.MsgImage:      files,
+			event.MsgVideo:      files,
+			event.MsgAudio:      files,
+			event.MsgFile:       files,
+			event.CapMsgVoice:   files,
+			event.CapMsgGIF:     files,
+			event.CapMsgSticker: files,
+		},
 		LocationMessage: event.CapLevelRejected,
 		Thread:          event.CapLevelFullySupported,
 		// Mattermost has no replies outside threads, bridgev2 turns Matrix replies into thread replies.

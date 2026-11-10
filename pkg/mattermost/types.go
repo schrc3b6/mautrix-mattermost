@@ -85,6 +85,47 @@ type Post struct {
 	FileIDs   []string `json:"file_ids,omitempty"`
 	// PendingPostID is set by the sending client and comes back unchanged in the posted event.
 	PendingPostID string `json:"pending_post_id,omitempty"`
+	// Metadata is filled in by the server; it carries the FileInfo for each of FileIDs.
+	Metadata *PostMetadata `json:"metadata,omitempty"`
+}
+
+type PostMetadata struct {
+	Files []*FileInfo `json:"files,omitempty"`
+}
+
+// FileInfo describes an uploaded file, as /files/{id}/info and post metadata return it.
+type FileInfo struct {
+	ID              string `json:"id"`
+	PostID          string `json:"post_id,omitempty"`
+	Name            string `json:"name"`
+	Extension       string `json:"extension,omitempty"`
+	Size            int64  `json:"size"`
+	MimeType        string `json:"mime_type"`
+	Width           int    `json:"width,omitempty"`
+	Height          int    `json:"height,omitempty"`
+	HasPreviewImage bool   `json:"has_preview_image,omitempty"`
+}
+
+// Files returns the attachments of the post, from the metadata where the server provided it.
+// IDs without metadata are returned with only their ID set; the caller fetches the rest.
+func (p *Post) Files() []*FileInfo {
+	known := make(map[string]*FileInfo)
+	if p.Metadata != nil {
+		for _, file := range p.Metadata.Files {
+			if file != nil && file.ID != "" {
+				known[file.ID] = file
+			}
+		}
+	}
+	files := make([]*FileInfo, 0, len(p.FileIDs))
+	for _, id := range p.FileIDs {
+		if file, ok := known[id]; ok {
+			files = append(files, file)
+		} else {
+			files = append(files, &FileInfo{ID: id})
+		}
+	}
+	return files
 }
 
 // IsSystem reports whether the post is a system message like "X joined the channel".
